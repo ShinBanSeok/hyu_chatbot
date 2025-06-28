@@ -12,6 +12,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain_community.chat_models import ChatOpenAI
 from typing import List
 from dotenv import load_dotenv
+from difflib import SequenceMatcher
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -77,11 +78,19 @@ def get_final_response(original_query: str):
 
     # --- 재구성된 질문 기반 검색 ---
     print("\n[단계 2: 확정적 Title 검색 시작]")
+
+    def is_title_similar(query: str, title: str, threshold: float = 0.85) -> bool:
+        return SequenceMatcher(None, query, title).ratio() >= threshold
+
     query_no_space = rewritten_query.replace(" ", "")
     golden_docs = []
     for title in all_titles:
         title_no_space = title.replace(" ", "")
-        if title in rewritten_query or title_no_space in query_no_space:
+        if (
+            title in rewritten_query
+            or title_no_space in query_no_space
+            or is_title_similar(query_no_space, title_no_space)
+        ):
             golden_docs.append(title_to_doc_map[title])
     if golden_docs:
         print(
@@ -90,6 +99,13 @@ def get_final_response(original_query: str):
 
     print("[단계 3: 보조 하이브리드 검색 시작]")
     hybrid_docs = hybrid_retriever.invoke(rewritten_query)
+    if not hybrid_docs:
+        print("   -> 하이브리드 검색 결과 없음, BM25 단독 검색 시도")
+        try:
+            hybrid_docs = bm25_retriever.invoke(rewritten_query)
+        except Exception as e:
+            print(f"   -> BM25 fallback 실패: {e}")
+            hybrid_docs = []
 
     print("[단계 4: 결과 종합 및 정제]")
     combined_docs_dict = OrderedDict()
